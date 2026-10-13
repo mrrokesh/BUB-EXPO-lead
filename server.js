@@ -1,11 +1,12 @@
 "use strict";
 /*
  * MR Rokesh expo lead server.
- * Serves the app and stores leads from every tablet in Postgres.
+ * Serves the built app (dist/) and stores leads from every tablet in Postgres.
  *
  *   1. Copy .env.example to .env and fill in DATABASE_URL and SYNC_KEY.
  *   2. npm install
- *   3. npm start        ->  http://localhost:3000
+ *   3. npm run build    (builds the app into dist/)
+ *   4. npm start        ->  http://localhost:3000
  *
  * The tablets keep working offline and push their leads here whenever they are online.
  * The database address and password stay in .env on this server. They never reach a tablet.
@@ -32,27 +33,20 @@ const FORM_IDS = new Set(["software", "website", "automate"]);
 const MAX_BODY = 2 * 1024 * 1024;
 const MAX_BATCH = 200;
 
-const STATIC_FILES = {
-  "/": "index.html",
-  "/index.html": "index.html",
-  "/app.js": "app.js",
-  "/styles.css": "styles.css",
-  "/sw.js": "sw.js",
-  "/manifest.json": "manifest.json",
-  "/logo.webp": "logo.webp",
-  "/icon-192.png": "icon-192.png",
-  "/icon-512.png": "icon-512.png",
-  "/icon-maskable-512.png": "icon-maskable-512.png",
-  "/apple-touch-icon.png": "apple-touch-icon.png"
-};
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
-  ".json": "application/manifest+json",
+  ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
   ".webp": "image/webp",
-  ".png": "image/png"
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8"
 };
+const NO_CACHE = new Set(["index.html", "sw.js", "registerSW.js", "manifest.webmanifest"]);
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS expo_leads (
@@ -132,6 +126,27 @@ function safeEqual(a, b) {
   const x = crypto.createHash("sha256").update(String(a)).digest();
   const y = crypto.createHash("sha256").update(String(b)).digest();
   return crypto.timingSafeEqual(x, y);
+}
+
+/* Finds the file to serve from the built app folder, or null. Page routes fall back to index.html.
+   Dotfiles (such as .env) and anything outside the folder are never served. */
+function resolveStatic(root, pathname) {
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch (error) { return null; }
+  if (decoded.includes("\u0000")) return null;
+  const relative = path.normalize(decoded).replace(/^[\\/]+/, "");
+  if (relative.split(/[\\/]/).some((part) => part.startsWith(".") && part !== "")) return null;
+  const rootDir = path.resolve(root);
+  const full = path.resolve(rootDir, relative);
+  if (full !== rootDir && !full.startsWith(rootDir + path.sep)) return null;
+  try {
+    if (fs.statSync(full).isFile()) return full;
+  } catch (error) { /* not a file */ }
+  if (!path.extname(relative)) {
+    const index = path.join(rootDir, "index.html");
+    if (fs.existsSync(index)) return index;
+  }
+  return null;
 }
 
 /* pool only needs query(sql, params). That keeps the handler easy to test with a stand-in database. */
@@ -215,11 +230,12 @@ function createHandler({ pool, syncKey, corsOrigin, root }) {
         return send(res, 404, { error: "Not found." });
       }
 
-      const file = STATIC_FILES[url.pathname];
-      if (req.method !== "GET" || !file) return send(res, 404, "Not found");
-      const full = path.join(root, file);
-      const data = fs.readFileSync(full);
-      return send(res, 200, data, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Cache-Control": file === "sw.js" ? "no-cache" : "public, max-age=300" });
+      if (req.method !== "GET") return send(res, 404, "Not found");
+      const file = resolveStatic(root, url.pathname);
+      if (!file) return send(res, 404, "Not found");
+      const name = path.relative(root, file).split(path.sep).join("/");
+      const cache = NO_CACHE.has(name) ? "no-cache" : name.startsWith("assets/") ? "public, max-age=31536000, immutable" : "public, max-age=300";
+      return send(res, 200, fs.readFileSync(file), { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Cache-Control": cache });
     } catch (error) {
       console.error(new Date().toISOString(), req.method, url.pathname, error.message);
       return send(res, 500, { error: "Server error. Check the server log." });
@@ -238,11 +254,16 @@ async function main() {
     console.error("Open .env and set SYNC_KEY to a long secret of your own (at least 12 characters).");
     process.exit(1);
   }
+  const root = path.join(__dirname, "dist");
+  if (!fs.existsSync(path.join(root, "index.html"))) {
+    console.error("The app has not been built yet. Run: npm run build");
+    process.exit(1);
+  }
   const { Pool } = require("pg");
   const pool = new Pool({ connectionString: DATABASE_URL, max: 5, connectionTimeoutMillis: 10000, ...(PGSSL === "require" ? { ssl: { rejectUnauthorized: false } } : {}) });
   pool.on("error", (error) => console.error("Database connection error:", error.message));
   await pool.query(SCHEMA);
-  const server = http.createServer(createHandler({ pool, syncKey: SYNC_KEY, corsOrigin: CORS_ORIGIN, root: __dirname }));
+  const server = http.createServer(createHandler({ pool, syncKey: SYNC_KEY, corsOrigin: CORS_ORIGIN, root }));
   server.listen(Number(PORT), () => console.log(`Expo lead server running on port ${PORT}. Database connected.`));
 }
 

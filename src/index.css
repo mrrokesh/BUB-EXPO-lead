@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #0c3dff;
+  --color-navy: #071a66;
+  --color-orange: #e44500;
+  --color-hot: #ff5c1c;
+  --color-ink: #122044;
+  --color-muted: #5d6d8c;
+  --color-line: #d9e2f0;
+  --color-surface: #f4f7fc;
+  --color-danger: #b42318;
+  --color-ok: #067647;
+  --shadow-card: 0 14px 34px rgba(7, 26, 102, 0.08);
+  --font-sans: "Segoe UI", "Nirmala UI", "Tamil Sangam MN", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Each form sets its own accent colour on its shell. */
+:root {
+  --accent: var(--color-brand);
+}
+
+@layer base {
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--color-ink);
+    background:
+      radial-gradient(900px 420px at 110% -10%, rgba(255, 92, 28, 0.18), transparent 50%),
+      radial-gradient(760px 380px at -20% -10%, rgba(12, 61, 255, 0.16), transparent 46%),
+      #e7eef8;
+  }
+  button { cursor: pointer; font-family: inherit; }
+  input, textarea { font-family: inherit; }
+  :focus-visible { outline: 3px solid #ffb088; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    * { scroll-behavior: auto !important; }
+  }
+}
